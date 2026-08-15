@@ -62,13 +62,18 @@ import XCTest
         }
         
         // close window without saving
+        let windowCount = app.windows.count
         documentWindow.buttons[XCUIIdentifierCloseWindow].click()
-        if documentWindow.sheets.count > 0 {
+        let deleteButton = documentWindow.sheets.firstMatch.children(matching: .button)["Delete"]
+        if deleteButton.waitForExistence(timeout: 1) {
             // it actually depends on user settings and iCloud availability if save sheet appears...
-            documentWindow.sheets.firstMatch.children(matching: .button)["Delete"].click()
+            deleteButton.click()
         }
-        sleep(1)
-        XCTAssert(!documentWindow.exists)
+        let windowClosed = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in app.windows.count == windowCount - 1 },
+            object: nil
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [windowClosed], timeout: 5), .completed)
     }
     
     
@@ -113,7 +118,7 @@ import XCTest
         
         // select Markdown to reveal the preview toggle
         syntaxPopUpButton.click()
-        app.menuItems["Markdown"].click()
+        documentWindow.menuItems["Markdown"].firstMatch.click()
         
         XCTAssert(previewButton.waitForExistence(timeout: 2))
         let editor = documentWindow.textViews.firstMatch
@@ -136,13 +141,13 @@ import XCTest
         
         // changing away from Markdown closes the preview and hides the toggle
         syntaxPopUpButton.click()
-        app.menuItems["None"].click()
+        documentWindow.menuItems["None"].firstMatch.click()
         XCTAssert(previewWebView.waitForNonExistence(timeout: 2))
         XCTAssert(previewButton.waitForNonExistence(timeout: 2))
         
         // returning to Markdown reveals an inactive toggle
         syntaxPopUpButton.click()
-        app.menuItems["Markdown"].click()
+        documentWindow.menuItems["Markdown"].firstMatch.click()
         XCTAssert(previewButton.waitForExistence(timeout: 2))
         XCTAssertFalse(previewWebView.exists)
         

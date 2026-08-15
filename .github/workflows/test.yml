@@ -59,7 +59,7 @@ jobs:
     - name: Unit Test for CotEditor
       run: |
         xcodebuild test -scheme CotEditor CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= CODE_SIGN_ENTITLEMENTS_SUFFIX=-AdHoc -skipPackagePluginValidation
-    - name: UI Test for Markdown Preview
+    - name: UI Test Suite (including Markdown Preview)
       if: github.repository == 'sebiimaks/CotEditor_MDPreview' && github.event_name == 'push' && github.ref == 'refs/heads/feature/markdown-preview'
       run: |
         xcodebuild test -scheme "UI Tests" CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= CODE_SIGN_ENTITLEMENTS_SUFFIX=-AdHoc -skipPackagePluginValidation
