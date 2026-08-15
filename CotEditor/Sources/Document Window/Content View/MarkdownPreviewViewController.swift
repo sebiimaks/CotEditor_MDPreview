@@ -161,7 +161,7 @@ final class DocumentContentViewController: NSSplitViewController {
         self?.renderPreview()
     }
     
-    private var textStorageObserver: NotificationCenter.ObservationToken?
+    private var textStorageObserver: any NSObjectProtocol?
     private var renderTask: Task<Void, Never>?
     
     
