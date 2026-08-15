@@ -34,6 +34,16 @@ final class ContentViewController: NSViewController {
     
     private(set) var hostedViewController: NSViewController
     
+    var documentViewController: DocumentViewController? {
+        
+        (self.hostedViewController as? DocumentContentViewController)?.editorViewController
+    }
+    
+    var showsMarkdownPreview: Bool {
+        
+        (self.hostedViewController as? DocumentContentViewController)?.showsMarkdownPreview == true
+    }
+    
     
     // MARK: Lifecycle
     
@@ -60,6 +70,17 @@ final class ContentViewController: NSViewController {
         view.embedSubview(self.hostedViewController.view)
         
         self.view = view
+    }
+    
+    
+    // MARK: Public Methods
+    
+    /// Shows or hides the live Markdown preview for the current document.
+    ///
+    /// - Parameter visible: Whether the preview should be visible.
+    func setMarkdownPreviewVisible(_ visible: Bool) {
+        
+        (self.hostedViewController as? DocumentContentViewController)?.setMarkdownPreviewVisible(visible)
     }
     
     
@@ -91,7 +112,7 @@ final class ContentViewController: NSViewController {
         
         switch document {
             case let document as Document:
-                DocumentViewController(document: document)
+                DocumentContentViewController(document: document)
             case let document as PreviewDocument:
                 NSHostingController(rootView: FilePreviewView(item: document))
             case .none:

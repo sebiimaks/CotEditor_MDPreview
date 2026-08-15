@@ -44,6 +44,7 @@ jobs:
   macOS:
     name: Tests for CotEditor
     runs-on: xcode-27
+    needs: packages
 
     steps:
     - name: Set Xcode version
@@ -58,17 +59,143 @@ jobs:
     - name: Unit Test for CotEditor
       run: |
         xcodebuild test -scheme CotEditor CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= CODE_SIGN_ENTITLEMENTS_SUFFIX=-AdHoc -skipPackagePluginValidation
+    - name: UI Test for Markdown Preview
+      if: github.repository == 'sebiimaks/CotEditor_MDPreview' && github.event_name == 'push' && github.ref == 'refs/heads/feature/markdown-preview'
+      run: |
+        xcodebuild test -scheme "UI Tests" CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= CODE_SIGN_ENTITLEMENTS_SUFFIX=-AdHoc -skipPackagePluginValidation
     - name: Release Build Smoke Test
       run: |
         set -euo pipefail
-        app_binary="/tmp/CotEditorInstall/Applications/CotEditor.app/Contents/MacOS/CotEditor"
-        rm -rf /tmp/CotEditorInstall
-        xcodebuild install -scheme CotEditor -configuration Release DSTROOT=/tmp/CotEditorInstall CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= CODE_SIGN_ENTITLEMENTS_SUFFIX=-AdHoc -skipPackagePluginValidation
-        "${app_binary}" >/dev/null 2>&1 &
+        build_root="${RUNNER_TEMP}/CotEditorMarkdownPreviewBuild"
+        install_root="${build_root}/Install"
+        derived_data="${build_root}/DerivedData"
+        built_app="${install_root}/Applications/CotEditor.app"
+        package_dir="${build_root}/CotEditor Markdown Preview Test"
+        test_app="${package_dir}/CotEditor Markdown Preview.app"
+        app_binary="${test_app}/Contents/MacOS/CotEditor"
+        runtime_log="${build_root}/runtime.log"
+
+        rm -rf "${build_root}"
+        mkdir -p "${install_root}" "${derived_data}" "${package_dir}"
+        xcodebuild install \
+          -scheme CotEditor \
+          -configuration Release \
+          -destination 'generic/platform=macOS' \
+          -derivedDataPath "${derived_data}" \
+          DSTROOT="${install_root}" \
+          ARCHS=arm64 \
+          ONLY_ACTIVE_ARCH=NO \
+          PRODUCT_BUNDLE_IDENTIFIER=com.sebiimaks.CotEditor.MarkdownPreviewTest \
+          CODE_SIGN_IDENTITY=- \
+          CODE_SIGN_STYLE=Manual \
+          DEVELOPMENT_TEAM= \
+          PROVISIONING_PROFILE_SPECIFIER= \
+          CODE_SIGN_ENTITLEMENTS_SUFFIX=-AdHoc \
+          -skipPackagePluginValidation
+
+        test -d "${built_app}"
+        ditto "${built_app}" "${test_app}"
+        cp LICENSE "${package_dir}/LICENSE.txt"
+        {
+          echo "UNSUPPORTED MARKDOWN PREVIEW TEST BUILD"
+          echo "Commit: ${GITHUB_SHA}"
+          echo "Architecture: arm64"
+          echo "Bundle ID: com.sebiimaks.CotEditor.MarkdownPreviewTest"
+          echo "Signing: ad hoc; not notarized"
+          echo "Minimum macOS: 26.0"
+          echo "Do not replace the production CotEditor application."
+        } > "${package_dir}/BUILD-INFO.txt"
+
+        "${app_binary}" -ApplePersistenceIgnoreState YES >"${runtime_log}" 2>&1 &
         app_pid=$!
         sleep 5
         if ! kill -0 "${app_pid}" 2>/dev/null; then
-          echo "CotEditor terminated unexpectedly during launch smoke test."
+          cat "${runtime_log}"
+          echo "CotEditor Markdown Preview terminated unexpectedly during launch smoke test."
           exit 1
         fi
         kill "${app_pid}" 2>/dev/null || true
+        wait "${app_pid}" 2>/dev/null || true
+    - name: Package and Verify Markdown Preview Testing App
+      if: github.repository == 'sebiimaks/CotEditor_MDPreview' && github.event_name == 'push' && github.ref == 'refs/heads/feature/markdown-preview'
+      run: |
+        set -euo pipefail
+        build_root="${RUNNER_TEMP}/CotEditorMarkdownPreviewBuild"
+        package_dir="${build_root}/CotEditor Markdown Preview Test"
+        app_path="${package_dir}/CotEditor Markdown Preview.app"
+        app_binary="${app_path}/Contents/MacOS/CotEditor"
+        archive_path="${RUNNER_TEMP}/CotEditor-Markdown-Preview-Test-arm64-${GITHUB_SHA}.zip"
+        verify_root="${RUNNER_TEMP}/CotEditorMarkdownPreviewVerify"
+        verified_package="${verify_root}/CotEditor Markdown Preview Test"
+        verified_app="${verified_package}/CotEditor Markdown Preview.app"
+        verified_binary="${verified_app}/Contents/MacOS/CotEditor"
+        signature_info="${build_root}/codesign.txt"
+        entitlements="${build_root}/entitlements.plist"
+        runtime_log="${build_root}/packaged-runtime.log"
+
+        test -x "${app_binary}"
+        plutil -lint "${app_path}/Contents/Info.plist"
+        test "$(plutil -extract CFBundleIdentifier raw "${app_path}/Contents/Info.plist")" = "com.sebiimaks.CotEditor.MarkdownPreviewTest"
+        test "$(plutil -extract LSMinimumSystemVersion raw "${app_path}/Contents/Info.plist")" = "26.0"
+        test "$(lipo -archs "${app_binary}")" = "arm64"
+        codesign --verify --deep --strict --all-architectures --verbose=2 "${app_path}"
+        codesign --display --verbose=4 "${app_path}" 2> "${signature_info}"
+        grep -Fx "Identifier=com.sebiimaks.CotEditor.MarkdownPreviewTest" "${signature_info}"
+        grep -Fx "Signature=adhoc" "${signature_info}"
+        grep -q 'flags=.*runtime' "${signature_info}"
+        codesign --display --entitlements - --xml "${app_path}" > "${entitlements}"
+        test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "${entitlements}")" = "true"
+        test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.cs.disable-library-validation' "${entitlements}")" = "true"
+        if /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.icloud-container-identifiers' "${entitlements}" >/dev/null 2>&1; then
+          echo "Unexpected iCloud entitlement in ad-hoc test build."
+          exit 1
+        fi
+
+        test -s "${app_path}/Contents/Resources/Credits.json"
+        test -s "${app_path}/Contents/Resources/Licenses/Sparkle.txt"
+        cmp CotEditor/Resources/Credits.json "${app_path}/Contents/Resources/Credits.json"
+        cmp CotEditor/Resources/Licenses/Sparkle.txt "${app_path}/Contents/Resources/Licenses/Sparkle.txt"
+        cmp LICENSE "${package_dir}/LICENSE.txt"
+        file "${app_binary}"
+        otool -L "${app_binary}"
+        if otool -L "${app_binary}" | grep -F "${GITHUB_WORKSPACE}"; then
+          echo "Runtime dependency points into the checkout."
+          exit 1
+        fi
+        if otool -L "${app_binary}" | grep -F "${RUNNER_TEMP}"; then
+          echo "Runtime dependency points into temporary build output."
+          exit 1
+        fi
+
+        ditto -c -k --sequesterRsrc --keepParent "${package_dir}" "${archive_path}"
+
+        rm -rf "${verify_root}"
+        mkdir -p "${verify_root}"
+        ditto -x -k "${archive_path}" "${verify_root}"
+        test -x "${verified_binary}"
+        test "$(lipo -archs "${verified_binary}")" = "arm64"
+        codesign --verify --deep --strict --all-architectures --verbose=2 "${verified_app}"
+        cmp LICENSE "${verified_package}/LICENSE.txt"
+        cmp CotEditor/Resources/Licenses/Sparkle.txt "${verified_app}/Contents/Resources/Licenses/Sparkle.txt"
+
+        "${verified_binary}" -ApplePersistenceIgnoreState YES >"${runtime_log}" 2>&1 &
+        app_pid=$!
+        sleep 5
+        if ! kill -0 "${app_pid}" 2>/dev/null; then
+          cat "${runtime_log}"
+          echo "Packaged CotEditor Markdown Preview terminated unexpectedly during launch verification."
+          exit 1
+        fi
+        kill "${app_pid}" 2>/dev/null || true
+        wait "${app_pid}" 2>/dev/null || true
+
+        shasum -a 256 "${archive_path}" | tee "${archive_path}.sha256"
+        cat "${archive_path}.sha256" >> "${GITHUB_STEP_SUMMARY}"
+    - name: Upload Markdown Preview Testing App
+      if: github.repository == 'sebiimaks/CotEditor_MDPreview' && github.event_name == 'push' && github.ref == 'refs/heads/feature/markdown-preview'
+      uses: actions/upload-artifact@v7
+      with:
+        path: ${{ runner.temp }}/CotEditor-Markdown-Preview-Test-arm64-${{ github.sha }}.zip
+        archive: false
+        if-no-files-found: error
+        retention-days: 14

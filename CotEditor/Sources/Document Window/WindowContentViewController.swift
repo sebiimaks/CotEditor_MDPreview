@@ -34,7 +34,8 @@ final class WindowContentViewController: NSSplitViewController, NSToolbarItemVal
     // MARK: Public Properties
     
     var document: DataDocument?  { didSet { self.updateDocument() } }
-    var documentViewController: DocumentViewController?  { self.contentViewController.hostedViewController as? DocumentViewController }
+    var documentViewController: DocumentViewController?  { self.contentViewController.documentViewController }
+    var showsMarkdownPreview: Bool  { self.isViewLoaded && self.contentViewController.showsMarkdownPreview }
     
     
     // MARK: Private Properties
@@ -278,6 +279,17 @@ final class WindowContentViewController: NSSplitViewController, NSToolbarItemVal
     
     
     // MARK: Public Methods
+    
+    /// Shows or hides the live Markdown preview for the current document.
+    ///
+    /// - Parameter visible: Whether the preview should be visible.
+    func setMarkdownPreviewVisible(_ visible: Bool) {
+        
+        guard visible || self.isViewLoaded else { return }
+        
+        self.contentViewController.setMarkdownPreviewVisible(visible)
+    }
+    
     
     /// Opens the desired sidebar pane.
     ///

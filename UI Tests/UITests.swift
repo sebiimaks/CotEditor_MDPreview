@@ -95,6 +95,65 @@ import XCTest
     }
     
     
+    func testMarkdownPreview() {
+        
+        let app = XCUIApplication()
+        app.launch()
+        
+        // open a new document
+        let menuBarsQuery = app.menuBars
+        menuBarsQuery.menuBarItems["File"].click()
+        menuBarsQuery.menuItems["New Window"].click()
+        
+        let documentWindow = app.windows.firstMatch
+        let syntaxPopUpButton = documentWindow.popUpButtons["syntaxPopUpButton"]
+        XCTAssert(syntaxPopUpButton.waitForExistence(timeout: 5))
+        let previewButton = documentWindow.buttons["markdownPreviewButton"]
+        XCTAssertFalse(previewButton.exists)
+        
+        // select Markdown to reveal the preview toggle
+        syntaxPopUpButton.click()
+        app.menuItems["Markdown"].click()
+        
+        XCTAssert(previewButton.waitForExistence(timeout: 2))
+        let editor = documentWindow.textViews.firstMatch
+        XCTAssert(editor.waitForExistence(timeout: 2))
+        editor.click()
+        editor.typeText("# Rendered preview")
+        previewButton.click()
+        
+        let previewWebView = documentWindow.descendants(matching: .any)
+            .matching(identifier: "MarkdownPreviewWebView")
+            .firstMatch
+        XCTAssert(previewWebView.waitForExistence(timeout: 5))
+        XCTAssert(previewWebView.staticTexts["Rendered preview"].waitForExistence(timeout: 5))
+        XCTAssert(editor.exists)
+        
+        // render subsequent edits without closing the preview
+        editor.click()
+        editor.typeText("\n\nLive update")
+        XCTAssert(previewWebView.staticTexts["Live update"].waitForExistence(timeout: 5))
+        
+        // changing away from Markdown closes the preview and hides the toggle
+        syntaxPopUpButton.click()
+        app.menuItems["None"].click()
+        XCTAssert(previewWebView.waitForNonExistence(timeout: 2))
+        XCTAssert(previewButton.waitForNonExistence(timeout: 2))
+        
+        // returning to Markdown reveals an inactive toggle
+        syntaxPopUpButton.click()
+        app.menuItems["Markdown"].click()
+        XCTAssert(previewButton.waitForExistence(timeout: 2))
+        XCTAssertFalse(previewWebView.exists)
+        
+        // close window without saving
+        documentWindow.buttons[XCUIIdentifierCloseWindow].click()
+        if documentWindow.sheets.count > 0 {
+            documentWindow.sheets.firstMatch.children(matching: .button)["Delete"].click()
+        }
+    }
+    
+    
     func testLaunchPerformance() throws {
         
         // This measures how long it takes to launch your application.

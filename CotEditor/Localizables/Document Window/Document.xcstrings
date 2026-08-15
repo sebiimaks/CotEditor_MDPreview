@@ -18479,6 +18479,28 @@
         }
       }
     },
+    "Toolbar.markdownPreview.label" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Markdown Preview"
+          }
+        }
+      }
+    },
+    "Toolbar.markdownPreview.tooltip" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Show or hide the rendered Markdown preview"
+          }
+        }
+      }
+    },
     "Toolbar.syntax.label" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
