@@ -136,7 +136,7 @@ import XCTest
             .matching(identifier: "MarkdownPreviewWebView")
             .firstMatch
         XCTAssert(previewWebView.waitForExistence(timeout: 5))
-        let renderedHeading = documentWindow.descendants(matching: .any)
+        let renderedHeading = previewWebView.descendants(matching: .any)
             .matching(NSPredicate(format: "label == %@", "Rendered preview"))
             .firstMatch
         XCTAssert(renderedHeading.waitForExistence(timeout: 5), app.debugDescription)
@@ -145,7 +145,7 @@ import XCTest
         // render subsequent edits without closing the preview
         editor.click()
         editor.typeText("\n\nLive update")
-        let liveUpdate = documentWindow.descendants(matching: .any)
+        let liveUpdate = previewWebView.descendants(matching: .any)
             .matching(NSPredicate(format: "label == %@", "Live update"))
             .firstMatch
         XCTAssert(liveUpdate.waitForExistence(timeout: 5), app.debugDescription)
