@@ -103,6 +103,7 @@ import XCTest
     func testMarkdownPreview() {
         
         let app = XCUIApplication()
+        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES", "-noDocumentOnLaunchOption", "2"]
         app.launch()
         
         // open a new document
@@ -111,16 +112,20 @@ import XCTest
         menuBarsQuery.menuItems["New Window"].click()
         
         let documentWindow = app.windows.firstMatch
+        XCTAssertEqual(app.windows.count, 1)
         let syntaxPopUpButton = documentWindow.popUpButtons["syntaxPopUpButton"]
         XCTAssert(syntaxPopUpButton.waitForExistence(timeout: 5))
-        let previewButton = documentWindow.buttons["markdownPreviewButton"]
+        let previewButton = documentWindow.descendants(matching: .any)
+            .matching(identifier: "markdownPreviewButton")
+            .firstMatch
         XCTAssertFalse(previewButton.exists)
         
         // select Markdown to reveal the preview toggle
         syntaxPopUpButton.click()
         documentWindow.menuItems["Markdown"].firstMatch.click()
         
-        XCTAssert(previewButton.waitForExistence(timeout: 2))
+        XCTAssertEqual(syntaxPopUpButton.value as? String, "Markdown")
+        XCTAssert(previewButton.waitForExistence(timeout: 2), app.debugDescription)
         let editor = documentWindow.textViews.firstMatch
         XCTAssert(editor.waitForExistence(timeout: 2))
         editor.click()
@@ -142,12 +147,14 @@ import XCTest
         // changing away from Markdown closes the preview and hides the toggle
         syntaxPopUpButton.click()
         documentWindow.menuItems["None"].firstMatch.click()
+        XCTAssertEqual(syntaxPopUpButton.value as? String, "None")
         XCTAssert(previewWebView.waitForNonExistence(timeout: 2))
         XCTAssert(previewButton.waitForNonExistence(timeout: 2))
         
         // returning to Markdown reveals an inactive toggle
         syntaxPopUpButton.click()
         documentWindow.menuItems["Markdown"].firstMatch.click()
+        XCTAssertEqual(syntaxPopUpButton.value as? String, "Markdown")
         XCTAssert(previewButton.waitForExistence(timeout: 2))
         XCTAssertFalse(previewWebView.exists)
         
