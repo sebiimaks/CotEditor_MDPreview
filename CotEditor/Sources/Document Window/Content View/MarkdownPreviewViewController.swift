@@ -24,6 +24,7 @@
 //
 
 import AppKit
+import Combine
 import SwiftUI
 import WebKit
 
