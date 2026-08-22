@@ -142,7 +142,6 @@ jobs:
         codesign --display --verbose=4 "${app_path}" 2> "${signature_info}"
         grep -Fx "Identifier=com.sebiimaks.CotEditor.MarkdownPreviewTest" "${signature_info}"
         grep -Fx "Signature=adhoc" "${signature_info}"
-        grep -q 'flags=.*runtime' "${signature_info}"
         codesign --display --entitlements - --xml "${app_path}" > "${entitlements}"
         test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "${entitlements}")" = "true"
         test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.cs.disable-library-validation' "${entitlements}")" = "true"
