@@ -23,6 +23,7 @@
 //  limitations under the License.
 //
 
+import AppKit
 import XCTest
 
 @MainActor final class UITests: XCTestCase {
@@ -102,6 +103,18 @@ import XCTest
     
     func testMarkdownPreview() {
         
+        let pasteboard = NSPasteboard.general
+        guard let pasteboardItems = self.copyPasteboardItems(from: pasteboard) else {
+            XCTFail("The clipboard could not be preserved before the UI test.")
+            return
+        }
+        defer {
+            XCTAssertTrue(
+                self.restorePasteboardItems(pasteboardItems, to: pasteboard),
+                "The clipboard could not be restored after the UI test."
+            )
+        }
+        
         let app = XCUIApplication()
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES", "-noDocumentOnLaunchOption", "2"]
         app.launch()
@@ -129,26 +142,29 @@ import XCTest
         let editor = documentWindow.textViews.firstMatch
         XCTAssert(editor.waitForExistence(timeout: 2))
         editor.click()
-        editor.typeText("# Rendered preview")
+        editor.typeText("# Rendered *preview* 7391")
         previewButton.click()
         
         let previewWebView = documentWindow.descendants(matching: .any)
             .matching(identifier: "MarkdownPreviewWebView")
             .firstMatch
         XCTAssert(previewWebView.waitForExistence(timeout: 5))
-        let renderedHeading = previewWebView.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@ OR value == %@", "Rendered preview", "Rendered preview"))
-            .firstMatch
-        XCTAssert(renderedHeading.waitForExistence(timeout: 5), app.debugDescription)
+        // WebKit's remote accessibility descendants are not reliably exported to XCUITest.
+        // Copying the selectable page verifies the actual rendered DOM instead.
+        XCTAssertEqual(
+            self.waitForRenderedText("Rendered preview 7391", from: previewWebView, in: app),
+            "Rendered preview 7391"
+        )
         XCTAssert(editor.exists)
         
         // render subsequent edits without closing the preview
         editor.click()
-        editor.typeText("\n\nLive update")
-        let liveUpdate = previewWebView.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@ OR value == %@", "Live update", "Live update"))
-            .firstMatch
-        XCTAssert(liveUpdate.waitForExistence(timeout: 5), app.debugDescription)
+        editor.typeKey(.downArrow, modifierFlags: .command)
+        editor.typeText("\n\n**Live update 4826**")
+        XCTAssertEqual(
+            self.waitForRenderedText("Rendered preview 7391 Live update 4826", from: previewWebView, in: app),
+            "Rendered preview 7391 Live update 4826"
+        )
         
         // changing away from Markdown closes the preview and hides the toggle
         syntaxPopUpButton.click()
@@ -178,5 +194,92 @@ import XCTest
         self.measure(metrics: [XCTApplicationLaunchMetric()]) {
             XCUIApplication().launch()
         }
+    }
+    
+    
+    // MARK: Private Methods
+    
+    /// Copies the selectable preview document and waits for its normalized rendered text.
+    private func waitForRenderedText(
+        _ expectedText: String,
+        from webView: XCUIElement,
+        in app: XCUIApplication,
+        timeout: TimeInterval = 5
+    ) -> String? {
+        
+        let pasteboard = NSPasteboard.general
+        let expectedText = self.normalizeWhitespace(expectedText)
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastCopiedText: String?
+        
+        repeat {
+            let previousChangeCount = pasteboard.changeCount
+            
+            webView.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+            app.typeKey("a", modifierFlags: .command)
+            app.typeKey("c", modifierFlags: .command)
+            
+            let copyDeadline = Date().addingTimeInterval(0.3)
+            repeat {
+                if pasteboard.changeCount != previousChangeCount,
+                   let copiedText = pasteboard.string(forType: .string)
+                {
+                    lastCopiedText = copiedText
+                    
+                    if self.normalizeWhitespace(copiedText) == expectedText {
+                        return expectedText
+                    }
+                    break
+                }
+                
+                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            } while Date() < copyDeadline
+            
+        } while Date() < deadline
+        
+        let attachment = XCTAttachment(screenshot: webView.screenshot())
+        attachment.name = "Markdown preview after copy timeout"
+        attachment.lifetime = .keepAlways
+        self.add(attachment)
+        
+        return lastCopiedText.map(self.normalizeWhitespace)
+    }
+    
+    
+    /// Returns a stable whitespace representation for rendered document comparisons.
+    private func normalizeWhitespace(_ string: String) -> String {
+        
+        string.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+    
+    
+    /// Copies pasteboard data so the UI test can restore the user's clipboard afterward.
+    private func copyPasteboardItems(from pasteboard: NSPasteboard) -> [NSPasteboardItem]? {
+        
+        guard let items = pasteboard.pasteboardItems else { return [] }
+        var copies: [NSPasteboardItem] = []
+        
+        for item in items {
+            let copy = NSPasteboardItem()
+            
+            for type in item.types {
+                guard
+                    let data = item.data(forType: type),
+                    copy.setData(data, forType: type)
+                else { return nil }
+            }
+            
+            copies.append(copy)
+        }
+        
+        return copies
+    }
+    
+    
+    /// Restores pasteboard contents captured before the UI test.
+    private func restorePasteboardItems(_ items: [NSPasteboardItem], to pasteboard: NSPasteboard) -> Bool {
+        
+        pasteboard.clearContents()
+        return items.isEmpty || pasteboard.writeObjects(items)
     }
 }
