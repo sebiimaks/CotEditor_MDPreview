@@ -137,7 +137,7 @@ import XCTest
             .firstMatch
         XCTAssert(previewWebView.waitForExistence(timeout: 5))
         let renderedHeading = previewWebView.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@", "Rendered preview"))
+            .matching(NSPredicate(format: "label == %@ OR value == %@", "Rendered preview", "Rendered preview"))
             .firstMatch
         XCTAssert(renderedHeading.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssert(editor.exists)
@@ -146,7 +146,7 @@ import XCTest
         editor.click()
         editor.typeText("\n\nLive update")
         let liveUpdate = previewWebView.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@", "Live update"))
+            .matching(NSPredicate(format: "label == %@ OR value == %@", "Live update", "Live update"))
             .firstMatch
         XCTAssert(liveUpdate.waitForExistence(timeout: 5), app.debugDescription)
         

@@ -282,10 +282,6 @@ private struct MarkdownPreviewView: View {
         
         MarkdownWebView(html: self.model.html)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel(Text(String(localized: "Toolbar.markdownPreview.label",
-                                            defaultValue: "Markdown Preview", table: "Document")))
-            .accessibilityIdentifier("MarkdownPreviewWebView")
     }
 }
 
@@ -309,6 +305,7 @@ private struct MarkdownWebView: NSViewRepresentable {
         
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
+        webView.setAccessibilityIdentifier("MarkdownPreviewWebView")
         
         return webView
     }
