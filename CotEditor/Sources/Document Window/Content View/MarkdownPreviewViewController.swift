@@ -24,8 +24,6 @@
 //
 
 import AppKit
-import Combine
-import SwiftUI
 import WebKit
 
 final class DocumentContentViewController: NSSplitViewController {
@@ -154,8 +152,19 @@ final class DocumentContentViewController: NSSplitViewController {
     // MARK: Private Properties
     
     private let document: Document
-    private let model = MarkdownPreviewModel()
     private let renderer = MarkdownPreviewRenderer()
+    private let webViewCoordinator = MarkdownPreviewWebViewCoordinator()
+    private lazy var webView: WKWebView = {
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        configuration.websiteDataStore = .nonPersistent()
+        
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = self.webViewCoordinator
+        webView.setAccessibilityIdentifier("MarkdownPreviewWebView")
+        
+        return webView
+    }()
     
     private lazy var updateDebouncer = Debouncer(delay: .milliseconds(200)) { [weak self] in
         self?.renderPreview()
@@ -191,8 +200,7 @@ final class DocumentContentViewController: NSSplitViewController {
     
     override func loadView() {
         
-        let view = MarkdownPreviewView(model: self.model)
-        self.view = NSHostingView(rootView: view)
+        self.view = self.webView
     }
     
     
@@ -246,7 +254,7 @@ final class DocumentContentViewController: NSSplitViewController {
             
             guard !Task.isCancelled, let self, self.isPreviewActive else { return }
             
-            self.model.html = html
+            self.webViewCoordinator.load(html, in: self.webView)
             self.renderTask = nil
         }
     }
@@ -267,145 +275,92 @@ private actor MarkdownPreviewRenderer {
 }
 
 
-@MainActor private final class MarkdownPreviewModel: ObservableObject {
+@MainActor private final class MarkdownPreviewWebViewCoordinator: NSObject, WKNavigationDelegate {
     
-    @Published var html = MarkdownHTMLRenderer.render(markdown: "")
-}
-
-
-private struct MarkdownPreviewView: View {
+    private var loadedHTML: String?
+    private var loadGeneration = 0
+    private var scrollCaptureTask: Task<Void, Never>?
+    private var scrollRestoreTask: Task<Void, Never>?
+    private var pendingNavigation: WKNavigation?
+    private var scrollFraction: Double?
     
-    @ObservedObject var model: MarkdownPreviewModel
     
-    
-    var body: some View {
+    /// Loads updated preview HTML while preserving the reader's relative scroll position.
+    func load(_ html: String, in webView: WKWebView) {
         
-        MarkdownWebView(html: self.model.html)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-
-private struct MarkdownWebView: NSViewRepresentable {
-    
-    var html: String
-    
-    
-    func makeCoordinator() -> Coordinator {
+        guard html != self.loadedHTML else { return }
         
-        Coordinator()
-    }
-    
-    
-    func makeNSView(context: Context) -> WKWebView {
+        self.loadedHTML = html
+        self.loadGeneration += 1
+        let generation = self.loadGeneration
+        self.scrollCaptureTask?.cancel()
+        self.scrollRestoreTask?.cancel()
         
-        let configuration = WKWebViewConfiguration()
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
-        configuration.websiteDataStore = .nonPersistent()
-        
-        let webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.navigationDelegate = context.coordinator
-        webView.setAccessibilityIdentifier("MarkdownPreviewWebView")
-        
-        return webView
-    }
-    
-    
-    func updateNSView(_ webView: WKWebView, context: Context) {
-        
-        guard
-            self.html != context.coordinator.loadedHTML
-        else { return }
-        
-        context.coordinator.loadedHTML = self.html
-        context.coordinator.load(self.html, in: webView)
-    }
-    
-    
-    @MainActor final class Coordinator: NSObject, WKNavigationDelegate {
-        
-        var loadedHTML: String?
-        private var loadGeneration = 0
-        private var scrollCaptureTask: Task<Void, Never>?
-        private var scrollRestoreTask: Task<Void, Never>?
-        private var pendingNavigation: WKNavigation?
-        private var scrollFraction: Double?
-        
-        
-        /// Loads updated preview HTML while preserving the reader's relative scroll position.
-        func load(_ html: String, in webView: WKWebView) {
-            
-            self.loadGeneration += 1
-            let generation = self.loadGeneration
-            self.scrollCaptureTask?.cancel()
-            self.scrollRestoreTask?.cancel()
-            
-            guard webView.url != nil else {
-                self.pendingNavigation = webView.loadHTMLString(html, baseURL: nil)
-                return
-            }
-            
-            self.scrollCaptureTask = Task { [weak self, weak webView] in
-                guard let self, let webView else { return }
-                
-                let value = try? await webView.callAsyncJavaScript(
-                    "return window.scrollY / Math.max(1, document.documentElement.scrollHeight - window.innerHeight);",
-                    in: nil,
-                    contentWorld: .defaultClient
-                )
-                guard !Task.isCancelled, generation == self.loadGeneration else { return }
-                
-                self.scrollFraction = (value as? NSNumber)?.doubleValue
-                self.pendingNavigation = webView.loadHTMLString(html, baseURL: nil)
-                self.scrollCaptureTask = nil
-            }
+        guard webView.url != nil else {
+            self.pendingNavigation = webView.loadHTMLString(html, baseURL: nil)
+            return
         }
         
+        self.scrollCaptureTask = Task { [weak self, weak webView] in
+            guard let self, let webView else { return }
+            
+            let value = try? await webView.callAsyncJavaScript(
+                "return window.scrollY / Math.max(1, document.documentElement.scrollHeight - window.innerHeight);",
+                in: nil,
+                contentWorld: .defaultClient
+            )
+            guard !Task.isCancelled, generation == self.loadGeneration else { return }
+            
+            self.scrollFraction = (value as? NSNumber)?.doubleValue
+            self.pendingNavigation = webView.loadHTMLString(html, baseURL: nil)
+            self.scrollCaptureTask = nil
+        }
+    }
+    
+    
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard navigation === self.pendingNavigation else { return }
+        
+        self.pendingNavigation = nil
+        guard let scrollFraction else { return }
+        
+        self.scrollFraction = nil
+        let generation = self.loadGeneration
+        self.scrollRestoreTask = Task { [weak self, weak webView] in
+            guard let self, let webView, generation == self.loadGeneration else { return }
             
-            guard navigation === self.pendingNavigation else { return }
+            _ = try? await webView.callAsyncJavaScript(
+                "window.scrollTo(0, fraction * Math.max(0, document.documentElement.scrollHeight - window.innerHeight));",
+                arguments: ["fraction": scrollFraction],
+                in: nil,
+                contentWorld: .defaultClient
+            )
+            guard !Task.isCancelled, generation == self.loadGeneration else { return }
             
-            self.pendingNavigation = nil
-            guard let scrollFraction else { return }
+            self.scrollRestoreTask = nil
+        }
+    }
+    
+    
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction
+    ) async -> WKNavigationActionPolicy {
+        
+        guard navigationAction.navigationType == .linkActivated else {
+            guard let url = navigationAction.request.url else { return .allow }
             
-            self.scrollFraction = nil
-            let generation = self.loadGeneration
-            self.scrollRestoreTask = Task { [weak self, weak webView] in
-                guard let self, let webView, generation == self.loadGeneration else { return }
-                
-                _ = try? await webView.callAsyncJavaScript(
-                    "window.scrollTo(0, fraction * Math.max(0, document.documentElement.scrollHeight - window.innerHeight));",
-                    arguments: ["fraction": scrollFraction],
-                    in: nil,
-                    contentWorld: .defaultClient
-                )
-                guard !Task.isCancelled, generation == self.loadGeneration else { return }
-                
-                self.scrollRestoreTask = nil
-            }
+            return url.absoluteString == "about:blank" ? .allow : .cancel
         }
         
-        
-        func webView(
-            _ webView: WKWebView,
-            decidePolicyFor navigationAction: WKNavigationAction
-        ) async -> WKNavigationActionPolicy {
-            
-            guard navigationAction.navigationType == .linkActivated else {
-                guard let url = navigationAction.request.url else { return .allow }
-                
-                return url.absoluteString == "about:blank" ? .allow : .cancel
-            }
-            
-            guard let url = navigationAction.request.url else {
-                return .cancel
-            }
-            
-            if MarkdownHTMLRenderer.isAllowedExternalLink(url) {
-                NSWorkspace.shared.open(url)
-            }
+        guard let url = navigationAction.request.url else {
             return .cancel
         }
+        
+        if MarkdownHTMLRenderer.isAllowedExternalLink(url) {
+            NSWorkspace.shared.open(url)
+        }
+        return .cancel
     }
 }
