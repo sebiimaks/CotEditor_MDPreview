@@ -162,6 +162,8 @@ final class DocumentContentViewController: NSSplitViewController {
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self.webViewCoordinator
         webView.setAccessibilityIdentifier("MarkdownPreviewWebView")
+        webView.setAccessibilityLabel(String(localized: "Toolbar.markdownPreview.label",
+                                               defaultValue: "Markdown Preview", table: "Document"))
         
         return webView
     }()
@@ -279,6 +281,7 @@ private actor MarkdownPreviewRenderer {
     
     private var loadedHTML: String?
     private var loadGeneration = 0
+    private var accessibilityRefreshTask: Task<Void, Never>?
     private var scrollCaptureTask: Task<Void, Never>?
     private var scrollRestoreTask: Task<Void, Never>?
     private var pendingNavigation: WKNavigation?
@@ -293,6 +296,9 @@ private actor MarkdownPreviewRenderer {
         self.loadedHTML = html
         self.loadGeneration += 1
         let generation = self.loadGeneration
+        self.pendingNavigation = nil
+        self.scrollFraction = nil
+        self.accessibilityRefreshTask?.cancel()
         self.scrollCaptureTask?.cancel()
         self.scrollRestoreTask?.cancel()
         
@@ -323,10 +329,12 @@ private actor MarkdownPreviewRenderer {
         guard navigation === self.pendingNavigation else { return }
         
         self.pendingNavigation = nil
+        let generation = self.loadGeneration
+        self.refreshAccessibility(in: webView, generation: generation)
+        
         guard let scrollFraction else { return }
         
         self.scrollFraction = nil
-        let generation = self.loadGeneration
         self.scrollRestoreTask = Task { [weak self, weak webView] in
             guard let self, let webView, generation == self.loadGeneration else { return }
             
@@ -339,6 +347,41 @@ private actor MarkdownPreviewRenderer {
             guard !Task.isCancelled, generation == self.loadGeneration else { return }
             
             self.scrollRestoreTask = nil
+        }
+    }
+    
+    
+    /// Waits briefly for WebKit's remote accessibility child and announces its availability.
+    private func refreshAccessibility(in webView: WKWebView, generation: Int) {
+        
+        self.accessibilityRefreshTask?.cancel()
+        self.accessibilityRefreshTask = Task { [weak self, weak webView] in
+            for attempt in 0..<40 {
+                guard
+                    !Task.isCancelled,
+                    let self,
+                    let webView,
+                    generation == self.loadGeneration
+                else { return }
+                
+                if let children = webView.accessibilityChildren(),
+                   children.contains(where: { NSAccessibility.Role.description(for: $0) != nil })
+                {
+                    NSAccessibility.post(
+                        element: webView,
+                        notification: .layoutChanged,
+                        userInfo: [.uiElements: children]
+                    )
+                    self.accessibilityRefreshTask = nil
+                    return
+                }
+                
+                if attempt < 39 {
+                    try? await Task.sleep(for: .milliseconds(25))
+                }
+            }
+            
+            self?.accessibilityRefreshTask = nil
         }
     }
     
