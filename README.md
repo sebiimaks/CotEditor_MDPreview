@@ -2,12 +2,27 @@
 
 CotEditor is a lightweight plain text editor designed for macOS. The project aims to provide a general plain text editor for everyone with an intuitive macOS-native user interface.
 
+This fork adds an optional native Markdown preview while retaining the CotEditor application name and its existing plain-text editing behavior.
+
 - __Requirement__: macOS Tahoe 26 or later
 - __Web Site__: <https://coteditor.com>
 - __Mac App Store__: <https://apps.apple.com/app/coteditor/id1024640650>
 - __Languages__: English, Bulgarian, Simplified Chinese, Traditional Chinese, Chinese (Hong Kong), Czech, Dutch, English (UK), French, German, Italian, Japanese, Korean, Polish, Portuguese, Russian, Spanish, and Turkish
 
 ![screenshot](screenshot@2x.png)
+
+
+
+## Fork Change Log
+
+<details>
+<summary>Native Markdown preview</summary>
+
+When Markdown is selected in the syntax menu, a preview toggle appears to the left of the selector. Enabling it opens a side-by-side, selectable, read-only preview that updates as the document is edited. Selecting another syntax hides both the toggle and the preview.
+
+The preview uses native AppKit and TextKit components so the feature remains compatible with CotEditor’s sandbox without outbound-network access. Raw HTML remains inert, remote images are represented by their alternative text, and supported HTTP and HTTPS links remain clickable. To bound parsing latency and memory use, preview rendering is unavailable for documents larger than 128 KB.
+
+</details>
 
 
 

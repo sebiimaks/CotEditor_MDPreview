@@ -62,13 +62,18 @@ import XCTest
         }
         
         // close window without saving
+        let windowCount = app.windows.count
         documentWindow.buttons[XCUIIdentifierCloseWindow].click()
-        if documentWindow.sheets.count > 0 {
+        let deleteButton = documentWindow.sheets.firstMatch.children(matching: .button)["Delete"]
+        if deleteButton.waitForExistence(timeout: 1) {
             // it actually depends on user settings and iCloud availability if save sheet appears...
-            documentWindow.sheets.firstMatch.children(matching: .button)["Delete"].click()
+            deleteButton.click()
         }
-        sleep(1)
-        XCTAssert(!documentWindow.exists)
+        let windowClosed = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in app.windows.count == windowCount - 1 },
+            object: nil
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [windowClosed], timeout: 5), .completed)
     }
     
     
@@ -95,11 +100,130 @@ import XCTest
     }
     
     
+    func testMarkdownPreview() {
+        
+        let app = XCUIApplication()
+        app.launchArguments += ["-ApplePersistenceIgnoreState", "YES", "-noDocumentOnLaunchOption", "2"]
+        app.launch()
+        
+        // open a new document
+        let menuBarsQuery = app.menuBars
+        menuBarsQuery.menuBarItems["File"].click()
+        menuBarsQuery.menuItems["New Window"].click()
+        
+        let documentWindow = app.windows.firstMatch
+        XCTAssertEqual(app.windows.count, 1)
+        let syntaxPopUpButton = documentWindow.popUpButtons["syntaxPopUpButton"]
+        XCTAssert(syntaxPopUpButton.waitForExistence(timeout: 5))
+        let previewButton = documentWindow.descendants(matching: .any)
+            .matching(identifier: "markdownPreviewButton")
+            .firstMatch
+        XCTAssertFalse(previewButton.exists)
+        
+        // select Markdown to reveal the preview toggle
+        syntaxPopUpButton.click()
+        documentWindow.menuItems["Markdown"].firstMatch.click()
+        
+        XCTAssertEqual(syntaxPopUpButton.value as? String, "Markdown")
+        XCTAssert(previewButton.waitForExistence(timeout: 2), app.debugDescription)
+        let editor = documentWindow.textViews
+            .matching(identifier: "EditorTextView")
+            .firstMatch
+        XCTAssert(editor.waitForExistence(timeout: 2))
+        editor.click()
+        editor.typeText("# Rendered *preview* 7391")
+        previewButton.click()
+        
+        let previewTextView = documentWindow.textViews
+            .matching(identifier: "MarkdownPreviewTextView")
+            .firstMatch
+        XCTAssert(previewTextView.waitForExistence(timeout: 5))
+        XCTAssert(previewTextView.isHittable)
+        XCTAssertGreaterThan(previewTextView.frame.width, 0)
+        XCTAssertGreaterThan(previewTextView.frame.height, 0)
+        XCTAssertEqual(
+            self.waitForRenderedText("Rendered preview 7391", from: previewTextView),
+            "Rendered preview 7391"
+        )
+        XCTAssert(editor.exists)
+        
+        // render subsequent edits without closing the preview
+        editor.typeKey(.downArrow, modifierFlags: .command)
+        editor.typeText("\n\n**Live update 4826**")
+        XCTAssertEqual(
+            self.waitForRenderedText("Rendered preview 7391 Live update 4826", from: previewTextView),
+            "Rendered preview 7391 Live update 4826"
+        )
+        
+        // changing away from Markdown closes the preview and hides the toggle
+        syntaxPopUpButton.click()
+        documentWindow.menuItems["None"].firstMatch.click()
+        XCTAssertEqual(syntaxPopUpButton.value as? String, "None")
+        XCTAssert(previewTextView.waitForNonExistence(timeout: 2))
+        XCTAssert(previewButton.waitForNonExistence(timeout: 2))
+        
+        // returning to Markdown reveals an inactive toggle
+        syntaxPopUpButton.click()
+        documentWindow.menuItems["Markdown"].firstMatch.click()
+        XCTAssertEqual(syntaxPopUpButton.value as? String, "Markdown")
+        XCTAssert(previewButton.waitForExistence(timeout: 2))
+        XCTAssertFalse(previewTextView.exists)
+        
+        // close window without saving
+        documentWindow.buttons[XCUIIdentifierCloseWindow].click()
+        let deleteButton = documentWindow.sheets.firstMatch.children(matching: .button)["Delete"]
+        if deleteButton.waitForExistence(timeout: 1) {
+            deleteButton.click()
+        }
+    }
+    
+    
     func testLaunchPerformance() throws {
         
         // This measures how long it takes to launch your application.
         self.measure(metrics: [XCTApplicationLaunchMetric()]) {
             XCUIApplication().launch()
         }
+    }
+    
+    
+    // MARK: Private Methods
+    
+    /// Waits for the native preview document to expose its normalized rendered text.
+    private func waitForRenderedText(
+        _ expectedText: String,
+        from textView: XCUIElement,
+        timeout: TimeInterval = 5
+    ) -> String? {
+        
+        let expectedText = self.normalizeWhitespace(expectedText)
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastRenderedText: String?
+        
+        repeat {
+            if let renderedText = textView.value as? String {
+                lastRenderedText = renderedText
+                
+                if self.normalizeWhitespace(renderedText) == expectedText {
+                    return expectedText
+                }
+            }
+            
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        } while Date() < deadline
+        
+        let attachment = XCTAttachment(screenshot: textView.screenshot())
+        attachment.name = "Markdown preview after text timeout"
+        attachment.lifetime = .keepAlways
+        self.add(attachment)
+        
+        return lastRenderedText.map(self.normalizeWhitespace)
+    }
+    
+    
+    /// Returns a stable whitespace representation for rendered document comparisons.
+    private func normalizeWhitespace(_ string: String) -> String {
+        
+        string.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 }

@@ -82,6 +82,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     private var syntaxNamesObserver: Task<Void, Never>?
     private var syntaxDefaultsObserver: AnyCancellable?
     private weak var syntaxPopUpButton: NSPopUpButton?
+    private weak var markdownPreviewButton: NSButton?
     
     
     // MARK: Lifecycle
@@ -344,15 +345,20 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
         
         // observe document's syntax change for toolbar
         self.documentSyntaxObserver?.cancel()
+        self.markdownPreviewButton?.state = .off
+        (self.contentViewController as? WindowContentViewController)?.setMarkdownPreviewVisible(false)
         if let document = document as? Document {
             self.syntaxPopUpButton?.isEnabled = true
+            self.updateMarkdownPreviewAvailability(for: document.syntaxName)
             self.documentSyntaxObserver = Task { [weak self] in
                 for await syntaxName in Observations({ document.syntaxName }) {
                     self?.selectSyntaxPopUpItem(with: syntaxName)
+                    self?.updateMarkdownPreviewAvailability(for: syntaxName)
                 }
             }
         } else {
             self.syntaxPopUpButton?.isEnabled = false
+            self.updateMarkdownPreviewAvailability(for: nil)
         }
     }
     
@@ -372,6 +378,44 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     private func restoreWindowOpacity() {
         
         (self.window as? DocumentWindow)?.applyBackgroundOpacity()
+    }
+    
+    
+    /// Updates the Markdown preview toggle for the current syntax.
+    ///
+    /// - Parameter syntaxName: The current syntax name, or `nil` for a non-text document.
+    private func updateMarkdownPreviewAvailability(for syntaxName: String?) {
+        
+        let isAvailable = (syntaxName == SyntaxName.markdown)
+        
+        self.markdownPreviewButton?.isHidden = !isAvailable
+        self.markdownPreviewButton?.isEnabled = isAvailable
+        
+        if isAvailable {
+            let showsPreview = (self.contentViewController as? WindowContentViewController)?.showsMarkdownPreview == true
+            self.markdownPreviewButton?.state = showsPreview ? .on : .off
+            return
+        }
+        
+        self.markdownPreviewButton?.state = .off
+        (self.contentViewController as? WindowContentViewController)?.setMarkdownPreviewVisible(false)
+    }
+    
+    
+    /// Toggles the live Markdown preview beside the editor.
+    @objc private func toggleMarkdownPreview(_ sender: NSButton) {
+        
+        guard
+            let document = self.fileDocument as? Document,
+            document.syntaxName == SyntaxName.markdown,
+            let viewController = self.contentViewController as? WindowContentViewController
+        else {
+            sender.state = .off
+            return
+        }
+        
+        viewController.setMarkdownPreviewVisible(sender.state == .on)
+        sender.state = viewController.showsMarkdownPreview ? .on : .off
     }
     
     
@@ -563,6 +607,8 @@ private extension NSUserInterfaceItemIdentifier {
     
     static let backDocumentHistoryMenu = Self(rawValue: "backDocumentHistoryMenu")
     static let forwardDocumentHistoryMenu = Self(rawValue: "forwardDocumentHistoryMenu")
+    static let markdownPreviewButton = Self(rawValue: "markdownPreviewButton")
+    static let syntaxPopUpButton = Self(rawValue: "syntaxPopUpButton")
 }
 
 
@@ -695,21 +741,55 @@ extension DocumentWindowController: NSToolbarDelegate {
                 
             case .syntax:
                 let popUpButton = NSPopUpButton()
+                popUpButton.identifier = .syntaxPopUpButton
+                popUpButton.setAccessibilityIdentifier("syntaxPopUpButton")
                 popUpButton.bezelStyle = .toolbar
                 popUpButton.isEnabled = (self.fileDocument is Document)
+                
+                let previewLabel = String(
+                    localized: "Toolbar.markdownPreview.label",
+                    defaultValue: "Markdown Preview",
+                    table: "Document"
+                )
+                let previewButton = NSButton(
+                    image: NSImage(systemSymbolName: "eye", accessibilityDescription: previewLabel)!,
+                    target: self,
+                    action: #selector(toggleMarkdownPreview)
+                )
+                previewButton.identifier = .markdownPreviewButton
+                previewButton.setAccessibilityIdentifier("markdownPreviewButton")
+                previewButton.bezelStyle = .toolbar
+                previewButton.setButtonType(.toggle)
+                previewButton.imagePosition = .imageOnly
+                previewButton.toolTip = String(
+                    localized: "Toolbar.markdownPreview.tooltip",
+                    defaultValue: "Show or hide the rendered Markdown preview",
+                    table: "Document"
+                )
+                previewButton.setAccessibilityLabel(previewLabel)
+                previewButton.isHidden = (self.fileDocument as? Document)?.syntaxName != SyntaxName.markdown
+                previewButton.isEnabled = !previewButton.isHidden
+                let showsPreview = (self.contentViewController as? WindowContentViewController)?.showsMarkdownPreview == true
+                previewButton.state = (!previewButton.isHidden && showsPreview) ? .on : .off
                 // store the reference only for the actual toolbar
                 // -> this method is invoked also for creating the item copies for the customization palette.
                 if flag {
                     self.syntaxPopUpButton = popUpButton
+                    self.markdownPreviewButton = previewButton
                 }
                 self.buildSyntaxPopUpButton(popUpButton)
+                
+                let stackView = NSStackView(views: [previewButton, popUpButton])
+                stackView.orientation = .horizontal
+                stackView.alignment = .centerY
+                stackView.spacing = 4
                 
                 let item = NSToolbarItem(itemIdentifier: itemIdentifier)
                 item.label = String(localized: "Toolbar.syntax.label",
                                     defaultValue: "Syntax", table: "Document")
                 item.toolTip = String(localized: "Toolbar.syntax.tooltip",
                                       defaultValue: "Change syntax", table: "Document")
-                item.view = popUpButton
+                item.view = stackView
                 item.visibilityPriority = .high
                 
                 let menuItem = NSMenuItem()
