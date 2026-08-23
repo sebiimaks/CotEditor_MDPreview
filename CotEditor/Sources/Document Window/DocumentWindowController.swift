@@ -746,8 +746,11 @@ extension DocumentWindowController: NSToolbarDelegate {
                 popUpButton.bezelStyle = .toolbar
                 popUpButton.isEnabled = (self.fileDocument is Document)
                 
-                let previewLabel = String(localized: "Toolbar.markdownPreview.label",
-                                          defaultValue: "Markdown Preview", table: "Document")
+                let previewLabel = String(
+                    localized: "Toolbar.markdownPreview.label",
+                    defaultValue: "Markdown Preview",
+                    table: "Document"
+                )
                 let previewButton = NSButton(
                     image: NSImage(systemSymbolName: "eye", accessibilityDescription: previewLabel)!,
                     target: self,
@@ -758,8 +761,11 @@ extension DocumentWindowController: NSToolbarDelegate {
                 previewButton.bezelStyle = .toolbar
                 previewButton.setButtonType(.toggle)
                 previewButton.imagePosition = .imageOnly
-                previewButton.toolTip = String(localized: "Toolbar.markdownPreview.tooltip",
-                                                defaultValue: "Show or hide the rendered Markdown preview", table: "Document")
+                previewButton.toolTip = String(
+                    localized: "Toolbar.markdownPreview.tooltip",
+                    defaultValue: "Show or hide the rendered Markdown preview",
+                    table: "Document"
+                )
                 previewButton.setAccessibilityLabel(previewLabel)
                 previewButton.isHidden = (self.fileDocument as? Document)?.syntaxName != SyntaxName.markdown
                 previewButton.isEnabled = !previewButton.isHidden

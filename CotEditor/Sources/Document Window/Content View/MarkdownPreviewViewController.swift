@@ -24,7 +24,6 @@
 //
 
 import AppKit
-import WebKit
 
 final class DocumentContentViewController: NSSplitViewController {
     
@@ -131,7 +130,17 @@ final class DocumentContentViewController: NSSplitViewController {
 }
 
 
-@MainActor private final class MarkdownPreviewViewController: NSViewController {
+enum MarkdownPreviewLayout {
+    
+    /// Returns a wrapping width that fits ordinary prose while keeping table columns stable.
+    static func documentWidth(viewportWidth: CGFloat, minimumContentWidth: CGFloat, horizontalInset: CGFloat) -> CGFloat {
+        
+        max(viewportWidth, minimumContentWidth + horizontalInset * 2)
+    }
+}
+
+
+@MainActor private final class MarkdownPreviewViewController: NSViewController, NSTextViewDelegate {
     
     // MARK: Public Properties
     
@@ -153,27 +162,53 @@ final class DocumentContentViewController: NSSplitViewController {
     
     private let document: Document
     private let renderer = MarkdownPreviewRenderer()
-    private let webViewCoordinator = MarkdownPreviewWebViewCoordinator()
-    private lazy var webView: WKWebView = {
-        let configuration = WKWebViewConfiguration()
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
-        configuration.websiteDataStore = .nonPersistent()
+    private lazy var textView: NSTextView = {
+        let textView = NSTextView(frame: .zero)
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = true
+        textView.importsGraphics = false
+        textView.allowsUndo = false
+        textView.drawsBackground = true
+        textView.backgroundColor = .textBackgroundColor
+        textView.textContainerInset = NSSize(width: 32, height: 32)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = true
+        textView.autoresizingMask = []
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        textView.layoutManager?.allowsNonContiguousLayout = true
+        textView.delegate = self
+        textView.setAccessibilityIdentifier("MarkdownPreviewTextView")
+        let accessibilityLabel = String(
+            localized: "Toolbar.markdownPreview.label",
+            defaultValue: "Markdown Preview",
+            table: "Document"
+        )
+        textView.setAccessibilityLabel(accessibilityLabel)
         
-        let webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.navigationDelegate = self.webViewCoordinator
-        webView.setAccessibilityIdentifier("MarkdownPreviewWebView")
-        webView.setAccessibilityLabel(String(localized: "Toolbar.markdownPreview.label",
-                                               defaultValue: "Markdown Preview", table: "Document"))
+        return textView
+    }()
+    private lazy var scrollView: NSScrollView = {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .textBackgroundColor
+        scrollView.documentView = self.textView
+        scrollView.setAccessibilityIdentifier("MarkdownPreviewView")
         
-        return webView
+        return scrollView
     }()
     
     private lazy var updateDebouncer = Debouncer(delay: .milliseconds(200)) { [weak self] in
         self?.renderPreview()
     }
     
-    private var textStorageObserver: any NSObjectProtocol?
+    private var isObservingTextStorage = false
     private var renderTask: Task<Void, Never>?
+    private var minimumContentWidth: CGFloat = 0
     
     
     // MARK: Lifecycle
@@ -193,16 +228,21 @@ final class DocumentContentViewController: NSSplitViewController {
     
     
     isolated deinit {
-        if let textStorageObserver = self.textStorageObserver {
-            NotificationCenter.default.removeObserver(textStorageObserver)
-        }
+        NotificationCenter.default.removeObserver(self)
         self.renderTask?.cancel()
     }
     
     
     override func loadView() {
         
-        self.view = self.webView
+        self.view = self.scrollView
+    }
+    
+    
+    override func viewDidLayout() {
+        
+        super.viewDidLayout()
+        self.updateDocumentWidth()
     }
     
     
@@ -211,32 +251,41 @@ final class DocumentContentViewController: NSSplitViewController {
     /// Starts observing document changes and renders the current contents immediately.
     private func startUpdating() {
         
-        guard self.textStorageObserver == nil else { return }
+        guard !self.isObservingTextStorage else { return }
         
-        self.textStorageObserver = NotificationCenter.default.addObserver(
-            forName: NSTextStorage.didProcessEditingNotification,
-            object: self.document.textStorage,
-            queue: .main
-        ) { [weak self] notification in
-            MainActor.assumeIsolated {
-                guard
-                    let textStorage = notification.object as? NSTextStorage,
-                    textStorage.editedMask.contains(.editedCharacters)
-                else { return }
-                
-                self?.updateDebouncer.schedule()
-            }
-        }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(markdownPreviewTextStorageDidProcessEditing),
+            name: NSTextStorage.didProcessEditingNotification,
+            object: self.document.textStorage
+        )
+        self.isObservingTextStorage = true
         self.renderPreview()
+    }
+    
+    
+    /// Schedules rendering only for character edits, not syntax-color attribute changes.
+    @objc private func markdownPreviewTextStorageDidProcessEditing(_ notification: Notification) {
+        
+        guard
+            let textStorage = notification.object as? NSTextStorage,
+            textStorage.editedMask.contains(.editedCharacters)
+        else { return }
+        
+        self.updateDebouncer.schedule()
     }
     
     
     /// Stops observing the document and cancels pending rendering work.
     private func stopUpdating() {
         
-        if let textStorageObserver = self.textStorageObserver {
-            NotificationCenter.default.removeObserver(textStorageObserver)
-            self.textStorageObserver = nil
+        if self.isObservingTextStorage {
+            NotificationCenter.default.removeObserver(
+                self,
+                name: NSTextStorage.didProcessEditingNotification,
+                object: self.document.textStorage
+            )
+            self.isObservingTextStorage = false
         }
         self.updateDebouncer.cancel()
         self.renderTask?.cancel()
@@ -252,13 +301,57 @@ final class DocumentContentViewController: NSSplitViewController {
         
         self.renderTask?.cancel()
         self.renderTask = Task { [weak self] in
-            guard let html = await renderer.render(markdown: source) else { return }
+            guard let rendering = await renderer.render(markdown: source) else { return }
             
             guard !Task.isCancelled, let self, self.isPreviewActive else { return }
             
-            self.webViewCoordinator.load(html, in: self.webView)
+            self.display(rendering)
             self.renderTask = nil
         }
+    }
+    
+    
+    /// Replaces the preview contents without forcing whole-document layout on the main actor.
+    private func display(_ rendering: MarkdownPreviewRendering) {
+        
+        let contentView = self.scrollView.contentView
+        let scrollOrigin = contentView.bounds.origin
+        
+        self.minimumContentWidth = rendering.minimumContentWidth
+        self.updateDocumentWidth()
+        self.textView.textStorage?.setAttributedString(rendering.attributedString)
+        contentView.scroll(to: scrollOrigin)
+        self.scrollView.reflectScrolledClipView(contentView)
+    }
+    
+    
+    /// Keeps prose wrapped to the viewport while allowing wide Markdown tables to scroll horizontally.
+    private func updateDocumentWidth() {
+        
+        let width = MarkdownPreviewLayout.documentWidth(
+            viewportWidth: self.scrollView.contentSize.width,
+            minimumContentWidth: self.minimumContentWidth,
+            horizontalInset: self.textView.textContainerInset.width
+        )
+        guard abs(self.textView.frame.width - width) > 0.5 else { return }
+        
+        self.textView.setFrameSize(NSSize(width: width, height: self.textView.frame.height))
+    }
+    
+    
+    // MARK: NSTextViewDelegate
+    
+    func textView(_ textView: NSTextView, clickedOnLink link: Any, at characterIndex: Int) -> Bool {
+        
+        let url: URL? = switch link {
+            case let url as URL: url
+            case let string as String: URL(string: string)
+            default: nil
+        }
+        guard let url, MarkdownAttributedStringRenderer.isAllowedExternalLink(url) else { return true }
+        
+        NSWorkspace.shared.open(url)
+        return true
     }
 }
 
@@ -266,105 +359,12 @@ final class DocumentContentViewController: NSSplitViewController {
 private actor MarkdownPreviewRenderer {
     
     /// Serializes background rendering so stale large-document renders never overlap.
-    func render(markdown: String) -> String? {
+    func render(markdown: String) -> sending MarkdownPreviewRendering? {
         
         guard !Task.isCancelled else { return nil }
         
-        let html = MarkdownHTMLRenderer.render(markdown: markdown)
+        let rendering = MarkdownAttributedStringRenderer.render(markdown: markdown)
         
-        return Task.isCancelled ? nil : html
-    }
-}
-
-
-@MainActor private final class MarkdownPreviewWebViewCoordinator: NSObject, WKNavigationDelegate {
-    
-    private var loadedHTML: String?
-    private var loadGeneration = 0
-    private var scrollCaptureTask: Task<Void, Never>?
-    private var scrollRestoreTask: Task<Void, Never>?
-    private var pendingNavigation: WKNavigation?
-    private var scrollFraction: Double?
-    
-    
-    /// Loads updated preview HTML while preserving the reader's relative scroll position.
-    func load(_ html: String, in webView: WKWebView) {
-        
-        guard html != self.loadedHTML else { return }
-        
-        self.loadedHTML = html
-        self.loadGeneration += 1
-        let generation = self.loadGeneration
-        self.pendingNavigation = nil
-        self.scrollFraction = nil
-        self.scrollCaptureTask?.cancel()
-        self.scrollRestoreTask?.cancel()
-        
-        guard webView.url != nil else {
-            self.pendingNavigation = webView.loadHTMLString(html, baseURL: nil)
-            return
-        }
-        
-        self.scrollCaptureTask = Task { [weak self, weak webView] in
-            guard let self, let webView else { return }
-            
-            let value = try? await webView.callAsyncJavaScript(
-                "return window.scrollY / Math.max(1, document.documentElement.scrollHeight - window.innerHeight);",
-                in: nil,
-                contentWorld: .defaultClient
-            )
-            guard !Task.isCancelled, generation == self.loadGeneration else { return }
-            
-            self.scrollFraction = (value as? NSNumber)?.doubleValue
-            self.pendingNavigation = webView.loadHTMLString(html, baseURL: nil)
-            self.scrollCaptureTask = nil
-        }
-    }
-    
-    
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        
-        guard navigation === self.pendingNavigation else { return }
-        
-        self.pendingNavigation = nil
-        guard let scrollFraction else { return }
-        
-        self.scrollFraction = nil
-        let generation = self.loadGeneration
-        self.scrollRestoreTask = Task { [weak self, weak webView] in
-            guard let self, let webView, generation == self.loadGeneration else { return }
-            
-            _ = try? await webView.callAsyncJavaScript(
-                "window.scrollTo(0, fraction * Math.max(0, document.documentElement.scrollHeight - window.innerHeight));",
-                arguments: ["fraction": scrollFraction],
-                in: nil,
-                contentWorld: .defaultClient
-            )
-            guard !Task.isCancelled, generation == self.loadGeneration else { return }
-            
-            self.scrollRestoreTask = nil
-        }
-    }
-    
-    
-    func webView(
-        _ webView: WKWebView,
-        decidePolicyFor navigationAction: WKNavigationAction
-    ) async -> WKNavigationActionPolicy {
-        
-        guard navigationAction.navigationType == .linkActivated else {
-            guard let url = navigationAction.request.url else { return .allow }
-            
-            return url.absoluteString == "about:blank" ? .allow : .cancel
-        }
-        
-        guard let url = navigationAction.request.url else {
-            return .cancel
-        }
-        
-        if MarkdownHTMLRenderer.isAllowedExternalLink(url) {
-            NSWorkspace.shared.open(url)
-        }
-        return .cancel
+        return Task.isCancelled ? nil : rendering
     }
 }

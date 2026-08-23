@@ -23,7 +23,6 @@
 //  limitations under the License.
 //
 
-import AppKit
 import XCTest
 
 @MainActor final class UITests: XCTestCase {
@@ -103,18 +102,6 @@ import XCTest
     
     func testMarkdownPreview() {
         
-        let pasteboard = NSPasteboard.general
-        guard let pasteboardItems = self.copyPasteboardItems(from: pasteboard) else {
-            XCTFail("The clipboard could not be preserved before the UI test.")
-            return
-        }
-        defer {
-            XCTAssertTrue(
-                self.restorePasteboardItems(pasteboardItems, to: pasteboard),
-                "The clipboard could not be restored after the UI test."
-            )
-        }
-        
         let app = XCUIApplication()
         app.launchArguments += ["-ApplePersistenceIgnoreState", "YES", "-noDocumentOnLaunchOption", "2"]
         app.launch()
@@ -139,30 +126,32 @@ import XCTest
         
         XCTAssertEqual(syntaxPopUpButton.value as? String, "Markdown")
         XCTAssert(previewButton.waitForExistence(timeout: 2), app.debugDescription)
-        let editor = documentWindow.textViews.firstMatch
+        let editor = documentWindow.textViews
+            .matching(identifier: "EditorTextView")
+            .firstMatch
         XCTAssert(editor.waitForExistence(timeout: 2))
         editor.click()
         editor.typeText("# Rendered *preview* 7391")
         previewButton.click()
         
-        let previewWebView = documentWindow.descendants(matching: .any)
-            .matching(identifier: "MarkdownPreviewWebView")
+        let previewTextView = documentWindow.textViews
+            .matching(identifier: "MarkdownPreviewTextView")
             .firstMatch
-        XCTAssert(previewWebView.waitForExistence(timeout: 5))
-        // WebKit's remote accessibility descendants are not reliably exported to XCUITest.
-        // Copying the selectable page verifies the actual rendered DOM instead.
+        XCTAssert(previewTextView.waitForExistence(timeout: 5))
+        XCTAssert(previewTextView.isHittable)
+        XCTAssertGreaterThan(previewTextView.frame.width, 0)
+        XCTAssertGreaterThan(previewTextView.frame.height, 0)
         XCTAssertEqual(
-            self.waitForRenderedText("Rendered preview 7391", from: previewWebView, in: app),
+            self.waitForRenderedText("Rendered preview 7391", from: previewTextView),
             "Rendered preview 7391"
         )
         XCTAssert(editor.exists)
         
         // render subsequent edits without closing the preview
-        editor.click()
         editor.typeKey(.downArrow, modifierFlags: .command)
         editor.typeText("\n\n**Live update 4826**")
         XCTAssertEqual(
-            self.waitForRenderedText("Rendered preview 7391 Live update 4826", from: previewWebView, in: app),
+            self.waitForRenderedText("Rendered preview 7391 Live update 4826", from: previewTextView),
             "Rendered preview 7391 Live update 4826"
         )
         
@@ -170,7 +159,7 @@ import XCTest
         syntaxPopUpButton.click()
         documentWindow.menuItems["None"].firstMatch.click()
         XCTAssertEqual(syntaxPopUpButton.value as? String, "None")
-        XCTAssert(previewWebView.waitForNonExistence(timeout: 2))
+        XCTAssert(previewTextView.waitForNonExistence(timeout: 2))
         XCTAssert(previewButton.waitForNonExistence(timeout: 2))
         
         // returning to Markdown reveals an inactive toggle
@@ -178,12 +167,13 @@ import XCTest
         documentWindow.menuItems["Markdown"].firstMatch.click()
         XCTAssertEqual(syntaxPopUpButton.value as? String, "Markdown")
         XCTAssert(previewButton.waitForExistence(timeout: 2))
-        XCTAssertFalse(previewWebView.exists)
+        XCTAssertFalse(previewTextView.exists)
         
         // close window without saving
         documentWindow.buttons[XCUIIdentifierCloseWindow].click()
-        if documentWindow.sheets.count > 0 {
-            documentWindow.sheets.firstMatch.children(matching: .button)["Delete"].click()
+        let deleteButton = documentWindow.sheets.firstMatch.children(matching: .button)["Delete"]
+        if deleteButton.waitForExistence(timeout: 1) {
+            deleteButton.click()
         }
     }
     
@@ -199,50 +189,35 @@ import XCTest
     
     // MARK: Private Methods
     
-    /// Copies the selectable preview document and waits for its normalized rendered text.
+    /// Waits for the native preview document to expose its normalized rendered text.
     private func waitForRenderedText(
         _ expectedText: String,
-        from webView: XCUIElement,
-        in app: XCUIApplication,
+        from textView: XCUIElement,
         timeout: TimeInterval = 5
     ) -> String? {
         
-        let pasteboard = NSPasteboard.general
         let expectedText = self.normalizeWhitespace(expectedText)
         let deadline = Date().addingTimeInterval(timeout)
-        var lastCopiedText: String?
+        var lastRenderedText: String?
         
         repeat {
-            let previousChangeCount = pasteboard.changeCount
-            
-            webView.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
-            app.typeKey("a", modifierFlags: .command)
-            app.typeKey("c", modifierFlags: .command)
-            
-            let copyDeadline = Date().addingTimeInterval(0.3)
-            repeat {
-                if pasteboard.changeCount != previousChangeCount,
-                   let copiedText = pasteboard.string(forType: .string)
-                {
-                    lastCopiedText = copiedText
-                    
-                    if self.normalizeWhitespace(copiedText) == expectedText {
-                        return expectedText
-                    }
-                    break
-                }
+            if let renderedText = textView.value as? String {
+                lastRenderedText = renderedText
                 
-                RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-            } while Date() < copyDeadline
+                if self.normalizeWhitespace(renderedText) == expectedText {
+                    return expectedText
+                }
+            }
             
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         } while Date() < deadline
         
-        let attachment = XCTAttachment(screenshot: webView.screenshot())
-        attachment.name = "Markdown preview after copy timeout"
+        let attachment = XCTAttachment(screenshot: textView.screenshot())
+        attachment.name = "Markdown preview after text timeout"
         attachment.lifetime = .keepAlways
         self.add(attachment)
         
-        return lastCopiedText.map(self.normalizeWhitespace)
+        return lastRenderedText.map(self.normalizeWhitespace)
     }
     
     
@@ -250,36 +225,5 @@ import XCTest
     private func normalizeWhitespace(_ string: String) -> String {
         
         string.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-    }
-    
-    
-    /// Copies pasteboard data so the UI test can restore the user's clipboard afterward.
-    private func copyPasteboardItems(from pasteboard: NSPasteboard) -> [NSPasteboardItem]? {
-        
-        guard let items = pasteboard.pasteboardItems else { return [] }
-        var copies: [NSPasteboardItem] = []
-        
-        for item in items {
-            let copy = NSPasteboardItem()
-            
-            for type in item.types {
-                guard
-                    let data = item.data(forType: type),
-                    copy.setData(data, forType: type)
-                else { return nil }
-            }
-            
-            copies.append(copy)
-        }
-        
-        return copies
-    }
-    
-    
-    /// Restores pasteboard contents captured before the UI test.
-    private func restorePasteboardItems(_ items: [NSPasteboardItem], to pasteboard: NSPasteboard) -> Bool {
-        
-        pasteboard.clearContents()
-        return items.isEmpty || pasteboard.writeObjects(items)
     }
 }

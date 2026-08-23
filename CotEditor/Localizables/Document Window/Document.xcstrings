@@ -18479,6 +18479,17 @@
         }
       }
     },
+    "MarkdownPreview.tooLarge" : {
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Markdown preview is unavailable for documents larger than 128 KB."
+          }
+        }
+      }
+    },
     "Toolbar.markdownPreview.label" : {
       "extractionState" : "extracted_with_value",
       "localizations" : {
