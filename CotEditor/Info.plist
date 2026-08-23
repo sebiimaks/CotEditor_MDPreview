@@ -107,7 +107,7 @@
 	<key>CFBundleHelpBookFolder</key>
 	<string>CotEditor.help</string>
 	<key>CFBundleHelpBookName</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER).help</string>
+	<string>com.coteditor.CotEditor.help</string>
 	<key>CFBundleIconName</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>

@@ -60,7 +60,7 @@ jobs:
       run: |
         xcodebuild test -scheme CotEditor CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= CODE_SIGN_ENTITLEMENTS_SUFFIX=-AdHoc -skipPackagePluginValidation
     - name: UI Test Suite (including Markdown Preview)
-      if: github.repository == 'sebiimaks/CotEditor_MDPreview' && github.event_name == 'push' && github.ref == 'refs/heads/feature/markdown-preview'
+      if: github.repository == 'sebiimaks/CotEditor_MDPreview'
       run: |
         xcodebuild test -scheme "UI Tests" CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= CODE_SIGN_ENTITLEMENTS_SUFFIX=-AdHoc -skipPackagePluginValidation
     - name: Release Build Smoke Test
@@ -124,11 +124,13 @@ jobs:
         package_dir="${build_root}/CotEditor Markdown Preview Test"
         app_path="${package_dir}/CotEditor Markdown Preview.app"
         app_binary="${app_path}/Contents/MacOS/CotEditor"
+        help_info="${app_path}/Contents/Resources/CotEditor.help/Contents/Info.plist"
         archive_path="${RUNNER_TEMP}/CotEditor-Markdown-Preview-Test-arm64-${GITHUB_SHA}.zip"
         verify_root="${RUNNER_TEMP}/CotEditorMarkdownPreviewVerify"
         verified_package="${verify_root}/CotEditor Markdown Preview Test"
         verified_app="${verified_package}/CotEditor Markdown Preview.app"
         verified_binary="${verified_app}/Contents/MacOS/CotEditor"
+        verified_help_info="${verified_app}/Contents/Resources/CotEditor.help/Contents/Info.plist"
         signature_info="${build_root}/codesign.txt"
         entitlements="${build_root}/entitlements.plist"
         runtime_log="${build_root}/packaged-runtime.log"
@@ -136,6 +138,8 @@ jobs:
         test -x "${app_binary}"
         plutil -lint "${app_path}/Contents/Info.plist"
         test "$(plutil -extract CFBundleIdentifier raw "${app_path}/Contents/Info.plist")" = "com.sebiimaks.CotEditor.MarkdownPreviewTest"
+        test "$(plutil -extract CFBundleHelpBookName raw "${app_path}/Contents/Info.plist")" = "com.coteditor.CotEditor.help"
+        test "$(plutil -extract CFBundleIdentifier raw "${help_info}")" = "com.coteditor.CotEditor.help"
         test "$(plutil -extract LSMinimumSystemVersion raw "${app_path}/Contents/Info.plist")" = "26.0"
         test "$(lipo -archs "${app_binary}")" = "arm64"
         codesign --verify --deep --strict --all-architectures --verbose=2 "${app_path}"
@@ -177,6 +181,7 @@ jobs:
         ditto -x -k "${archive_path}" "${verify_root}"
         test -x "${verified_binary}"
         test "$(lipo -archs "${verified_binary}")" = "arm64"
+        test "$(plutil -extract CFBundleHelpBookName raw "${verified_app}/Contents/Info.plist")" = "$(plutil -extract CFBundleIdentifier raw "${verified_help_info}")"
         codesign --verify --deep --strict --all-architectures --verbose=2 "${verified_app}"
         cmp LICENSE "${verified_package}/LICENSE.txt"
         cmp CotEditor/Resources/Licenses/Sparkle.txt "${verified_app}/Contents/Resources/Licenses/Sparkle.txt"
