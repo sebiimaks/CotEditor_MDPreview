@@ -149,6 +149,10 @@ jobs:
           echo "Unexpected iCloud entitlement in ad-hoc test build."
           exit 1
         fi
+        if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.network.client' "${entitlements}" >/dev/null 2>&1; then
+          echo "Unexpected outbound-network entitlement in ad-hoc test build."
+          exit 1
+        fi
 
         test -s "${app_path}/Contents/Resources/Credits.json"
         test -s "${app_path}/Contents/Resources/Licenses/Sparkle.txt"
@@ -157,11 +161,11 @@ jobs:
         cmp LICENSE "${package_dir}/LICENSE.txt"
         file "${app_binary}"
         otool -L "${app_binary}"
-        if otool -L "${app_binary}" | grep -F "${GITHUB_WORKSPACE}"; then
+        if otool -L "${app_binary}" | tail -n +2 | grep -F "${GITHUB_WORKSPACE}"; then
           echo "Runtime dependency points into the checkout."
           exit 1
         fi
-        if otool -L "${app_binary}" | grep -F "${RUNNER_TEMP}"; then
+        if otool -L "${app_binary}" | tail -n +2 | grep -F "${RUNNER_TEMP}"; then
           echo "Runtime dependency points into temporary build output."
           exit 1
         fi
