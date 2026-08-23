@@ -296,10 +296,17 @@ enum MarkdownPreviewLayout {
     /// Renders a snapshot of the document without blocking typing.
     private func renderPreview() {
         
-        let source = self.document.textStorage.string
-        let renderer = self.renderer
-        
         self.renderTask?.cancel()
+        
+        let textStorage = self.document.textStorage
+        guard MarkdownAttributedStringRenderer.canSnapshotSource(utf16Length: textStorage.length) else {
+            self.display(MarkdownAttributedStringRenderer.oversizedRendering())
+            self.renderTask = nil
+            return
+        }
+        
+        let source = textStorage.string
+        let renderer = self.renderer
         self.renderTask = Task { [weak self] in
             guard let rendering = await renderer.render(markdown: source) else { return }
             

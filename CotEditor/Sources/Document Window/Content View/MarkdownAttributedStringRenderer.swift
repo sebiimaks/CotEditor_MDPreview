@@ -53,7 +53,7 @@ enum MarkdownAttributedStringRenderer {
     static func render(markdown: String) -> MarkdownPreviewRendering {
         
         guard self.isWithinSourceLimit(markdown) else {
-            return MarkdownPreviewRendering(attributedString: self.oversizedPreviewMessage())
+            return self.oversizedRendering()
         }
         
         let attributedString: AttributedString
@@ -141,6 +141,20 @@ enum MarkdownAttributedStringRenderer {
     static func isWithinSourceLimit(_ markdown: String) -> Bool {
         
         markdown.utf8.count <= self.maximumSourceByteCount
+    }
+
+
+    /// Whether creating a document snapshot can still satisfy the UTF-8 source limit.
+    static func canSnapshotSource(utf16Length: Int) -> Bool {
+        
+        utf16Length <= self.maximumSourceByteCount
+    }
+
+
+    /// A bounded rendering that explains why an oversized source is not previewed.
+    static func oversizedRendering() -> MarkdownPreviewRendering {
+        
+        MarkdownPreviewRendering(attributedString: self.oversizedPreviewMessage())
     }
 }
 

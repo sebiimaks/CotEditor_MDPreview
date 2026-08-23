@@ -283,6 +283,8 @@ import Testing
         let exactASCII = String(repeating: "a", count: limit)
         let exactMultibyte = String(repeating: "é", count: limit / 2)
         
+        #expect(MarkdownAttributedStringRenderer.canSnapshotSource(utf16Length: limit))
+        #expect(!MarkdownAttributedStringRenderer.canSnapshotSource(utf16Length: limit + 1))
         #expect(MarkdownAttributedStringRenderer.isWithinSourceLimit(exactASCII))
         #expect(!MarkdownAttributedStringRenderer.isWithinSourceLimit(exactASCII + "a"))
         #expect(MarkdownAttributedStringRenderer.isWithinSourceLimit(exactMultibyte))
